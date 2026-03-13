@@ -15,12 +15,7 @@ class FavoritesStorage:
         self.data = self._load_data()
 
     def _load_data(self) -> Dict[str, List[Dict]]:
-        """
-        Загрузка данных из JSON файла.
 
-        Returns:
-            Dict: загруженные данные в формате {user_id: [favorites]}
-        """
         if os.path.exists(self.data_file):
             try:
                 with open(self.data_file, 'r', encoding='utf-8') as f:
@@ -31,7 +26,7 @@ class FavoritesStorage:
         return {}
 
     def _save_data(self) -> None:
-        """Сохранение данных в JSON файл с красивым форматированием."""
+        # Сохранение данных в JSON файл с красивым форматированием.
         try:
             with open(self.data_file, 'w', encoding='utf-8') as f:
                 json.dump(self.data, f, ensure_ascii=False, indent=2, sort_keys=True)
@@ -184,3 +179,4 @@ class FavoritesStorage:
         except Exception as e:
             logger.error(f"Ошибка очистки избранного: {e}")
             return False
+

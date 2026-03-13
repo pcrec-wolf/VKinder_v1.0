@@ -1,40 +1,24 @@
-import random
-from typing import Dict, List, Optional, Set
-from datetime import datetime
 import logging
+from typing import Dict, List, Optional, Set
 from vk_api_client import VkApiClient
-from config import DEFAULT_SEARCH_PARAMS
 
 logger = logging.getLogger(__name__)
 
 
 class UserManager:
-    """Менеджер для управления поиском и хранением результатов"""
+    #Менеджер для управления поиском и хранением результатов.
 
     def __init__(self, vk_client: VkApiClient):
-        """
-        Инициализация менеджера пользователей
 
-        Args:
-            vk_client: клиент VK API
-        """
         self.vk_client = vk_client
-        self.search_results = {}  # user_id -> список найденных пользователей
-        self.current_index = {}  # user_id -> текущий индекс в результатах
-        self.viewed_users = {}  # user_id -> множество просмотренных ID
-        self.search_params = {}  # user_id -> параметры поиска
+        self.search_results: Dict[int, List[Dict]] = {}      # user_id -> список найденных
+        self.current_index: Dict[int, int] = {}               # user_id -> текущий индекс
+        self.viewed_users: Dict[int, Set[int]] = {}           # user_id -> просмотренные ID
+        self.search_params: Dict[int, Dict] = {}              # user_id -> параметры поиска
+        self.favorite_users: Dict[int, Set[int]] = {}         # user_id -> избранные ID
 
     def start_search(self, user_id: int, params: Optional[Dict] = None) -> bool:
-        """
-        Начало поиска для пользователя
 
-        Args:
-            user_id: ID пользователя
-            params: параметры поиска
-
-        Returns:
-            bool: успешность начала поиска
-        """
         try:
             # Сохраняем параметры поиска
             self.search_params[user_id] = params or {}
@@ -43,24 +27,17 @@ class UserManager:
             self.search_results[user_id] = []
             self.current_index[user_id] = -1
             self.viewed_users[user_id] = set()
+            self.favorite_users[user_id] = set()
 
             # Выполняем первый поиск
-            return self.load_more_results(user_id)
+            return self._load_more_results(user_id)
 
         except Exception as e:
             logger.error(f"Ошибка начала поиска: {e}")
             return False
 
-    def load_more_results(self, user_id: int) -> bool:
-        """
-        Загрузка дополнительных результатов поиска
+    def _load_more_results(self, user_id: int) -> bool:
 
-        Args:
-            user_id: ID пользователя
-
-        Returns:
-            bool: успешность загрузки
-        """
         try:
             params = self.search_params.get(user_id, {}).copy()
 
@@ -73,13 +50,20 @@ class UserManager:
             if results:
                 # Фильтруем уже просмотренных
                 viewed = self.viewed_users.get(user_id, set())
-                new_results = [r for r in results if r['id'] not in viewed]
+                favorites = self.favorite_users.get(user_id, set())
+
+                # Исключаем просмотренных и уже добавленных в избранное
+                filtered_results = [
+                    r for r in results
+                    if r['id'] not in viewed and r['id'] not in favorites
+                ]
 
                 if user_id not in self.search_results:
                     self.search_results[user_id] = []
 
-                self.search_results[user_id].extend(new_results)
-                return len(new_results) > 0
+                self.search_results[user_id].extend(filtered_results)
+                logger.info(f"Загружено {len(filtered_results)} новых результатов для {user_id}")
+                return len(filtered_results) > 0
 
             return False
 
@@ -88,15 +72,7 @@ class UserManager:
             return False
 
     def get_next_user(self, user_id: int) -> Optional[Dict]:
-        """
-        Получение следующего пользователя для показа
 
-        Args:
-            user_id: ID пользователя
-
-        Returns:
-            Optional[Dict]: данные следующего пользователя или None
-        """
         try:
             # Проверяем, есть ли результаты
             if user_id not in self.search_results:
@@ -108,7 +84,7 @@ class UserManager:
 
             # Если дошли до конца, загружаем еще
             if current_idx >= len(results) - 1:
-                if not self.load_more_results(user_id):
+                if not self._load_more_results(user_id):
                     return None
                 results = self.search_results[user_id]
 
@@ -132,37 +108,38 @@ class UserManager:
             return None
 
     def get_current_user(self, user_id: int) -> Optional[Dict]:
-        """
-        Получение текущего пользователя
 
-        Args:
-            user_id: ID пользователя
-
-        Returns:
-            Optional[Dict]: данные текущего пользователя
-        """
         try:
             if user_id in self.search_results:
                 idx = self.current_index.get(user_id, -1)
-                if idx >= 0 and idx < len(self.search_results[user_id]):
+                if 0 <= idx < len(self.search_results[user_id]):
                     return self.search_results[user_id][idx]
             return None
         except Exception as e:
             logger.error(f"Ошибка получения текущего пользователя: {e}")
             return None
 
-    def reset_search(self, user_id: int):
-        """
-        Сброс поиска для пользователя
+    def mark_as_favorite(self, user_id: int, vk_user_id: int) -> None:
 
-        Args:
-            user_id: ID пользователя
-        """
-        if user_id in self.search_results:
-            del self.search_results[user_id]
-        if user_id in self.current_index:
-            del self.current_index[user_id]
-        if user_id in self.viewed_users:
-            del self.viewed_users[user_id]
-        if user_id in self.search_params:
-            del self.search_params[user_id]
+        if user_id not in self.favorite_users:
+            self.favorite_users[user_id] = set()
+        self.favorite_users[user_id].add(vk_user_id)
+
+    def is_favorite(self, user_id: int, vk_user_id: int) -> bool:
+
+        return vk_user_id in self.favorite_users.get(user_id, set())
+
+    def reset_search(self, user_id: int) -> None:
+
+        # Сброс поиска для пользователя.
+        keys_to_delete = [
+            'search_results', 'current_index', 'viewed_users',
+            'search_params', 'favorite_users'
+        ]
+
+        for key in keys_to_delete:
+            attr = getattr(self, key)
+            if user_id in attr:
+                del attr[user_id]
+
+        logger.info(f"Поиск для пользователя {user_id} сброшен")
