@@ -1,12 +1,12 @@
 import logging
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Any
 from vk_api_client import VkApiClient
 
 logger = logging.getLogger(__name__)
 
 
 class UserManager:
-    #Менеджер для управления поиском и хранением результатов.
+    # Менеджер для управления поиском и хранением результатов.
 
     def __init__(self, vk_client: VkApiClient):
 
@@ -16,8 +16,9 @@ class UserManager:
         self.viewed_users: Dict[int, Set[int]] = {}           # user_id -> просмотренные ID
         self.search_params: Dict[int, Dict] = {}              # user_id -> параметры поиска
         self.favorite_users: Dict[int, Set[int]] = {}         # user_id -> избранные ID
+        self.excluded_users: Dict[int, Set[int]] = {}         # user_id -> исключенные ID (избранные из БД)
 
-    def start_search(self, user_id: int, params: Optional[Dict] = None) -> bool:
+    def start_search(self, user_id: int, params: Optional[Dict] = None, excluded_ids: Optional[List[int]] = None) -> bool:
 
         try:
             # Сохраняем параметры поиска
@@ -28,6 +29,7 @@ class UserManager:
             self.current_index[user_id] = -1
             self.viewed_users[user_id] = set()
             self.favorite_users[user_id] = set()
+            self.excluded_users[user_id] = set(excluded_ids) if excluded_ids else set()
 
             # Выполняем первый поиск
             return self._load_more_results(user_id)
@@ -48,14 +50,18 @@ class UserManager:
             results = self.vk_client.search_users(params)
 
             if results:
-                # Фильтруем уже просмотренных
+                # Фильтруем уже просмотренных и исключенных
                 viewed = self.viewed_users.get(user_id, set())
                 favorites = self.favorite_users.get(user_id, set())
+                excluded = self.excluded_users.get(user_id, set())
 
-                # Исключаем просмотренных и уже добавленных в избранное
+                # Объединяем все ID для исключения
+                all_excluded = viewed.union(favorites).union(excluded)
+
+                # Исключаем просмотренных, избранных и исключенных из БД
                 filtered_results = [
                     r for r in results
-                    if r['id'] not in viewed and r['id'] not in favorites
+                    if r['id'] not in all_excluded
                 ]
 
                 if user_id not in self.search_results:
@@ -76,8 +82,8 @@ class UserManager:
         try:
             # Проверяем, есть ли результаты
             if user_id not in self.search_results:
-                if not self.start_search(user_id):
-                    return None
+                logger.error(f"Поиск не начат для пользователя {user_id}")
+                return None
 
             results = self.search_results[user_id]
             current_idx = self.current_index.get(user_id, -1)
@@ -132,10 +138,8 @@ class UserManager:
     def reset_search(self, user_id: int) -> None:
 
         # Сброс поиска для пользователя.
-        keys_to_delete = [
-            'search_results', 'current_index', 'viewed_users',
-            'search_params', 'favorite_users'
-        ]
+        keys_to_delete = ['search_results', 'current_index', 'viewed_users',
+                         'search_params', 'favorite_users', 'excluded_users']
 
         for key in keys_to_delete:
             attr = getattr(self, key)
